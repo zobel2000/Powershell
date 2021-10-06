@@ -1,0 +1,85 @@
+Set-Location $PSScriptRoot # in das Verzeichnis vom Skript gehen
+$ErrorActionPreference = "Stop" # bei Fehlern anhalten
+
+$ergebnisdatei = ".\Validator_Ergebnis.txt"
+
+function Test-HtmlValid($url) {
+    $doNotReport = @(
+        "*CSS: Parse Error*", 
+        "*Javascript*",
+        "*attribute*",
+        "*Element <noscript> not allowed as child of element <picture>*",
+        "*Element <style> not allowed as child of element <noscript>*",
+        "*element as a top-level heading only*",
+        "*Stray end tag*"
+    )
+
+    $vnupath = ".\vnu.windows\vnu-runtime-image\bin\vnu.bat"
+
+    try {
+    #--asciiquotes wandelt utf-8 quotes in normale um, hier aber nicht notwendig, da wir sonst diese escapen müssten
+    $allOutput = & cmd /c "$vnupath $url 2>&1"
+    $allOutput = $allOutput -replace "â€œ", "<"
+    $allOutput = $allOutput -replace "â€", ">"
+        
+    } catch {
+    }
+
+    $stdout = $allOutput | ?{ $_ -isnot [System.Management.Automation.ErrorRecord] }
+
+    $zwischenergebnis = $stdout | Foreach-Object {
+        $zeile = $_
+
+        $reportThis = $true
+        $doNotReport | Foreach-Object {
+            $regel = $_
+
+            if ( $zeile -like $regel ) {
+                $reportThis = $false
+            }
+        }
+
+        if ($reportThis) {
+            $zeile
+        }
+    }
+
+    #-not [bool]($zwischenergebnis)
+    $zwischenergebnis 
+
+
+    
+    $zwischenergebnis >> $ergebnisdatei 
+}
+
+function Test-HtmlValidWebsite($sitemapsource) {
+    if (test-path $ergebnisdatei) {
+        remove-item $ergebnisdatei
+    }
+    if (-not ([bool]$sitemapsource)) {
+        $sitemapsource = ".\sitemap.txt"
+    }
+
+    if (test-path $sitemapsource) {
+    }else{
+       Write-Host "Keine Einträge in Sitemap gefunden. Bitte geben sie eine andere Quelle an oder speichern sie die Sitemap im gleichen Verzeichnis unter sitemap.txt";
+       break
+    }
+ 
+    $sitemap = Get-Content $sitemapsource
+
+    $sitemap | ForEach-Object {
+        Test-HtmlValid $_
+    }
+     
+} 
+
+Test-HtmlValidWebsite
+
+(Get-Content $ergebnisdatei) | ForEach-Object{
+    $zeile = $_ 
+    $index = $zeile.indexof('":')
+    $neuezeile = $zeile.substring($index + 2)
+    $index = $neuezeile.indexof(':')
+    $neuezeile.substring($index + 1)
+} | Group-Object | Sort-Object Count -Descending | Select-Object Name, Count | Out-GridView
