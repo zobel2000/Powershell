@@ -1,0 +1,140 @@
+<#
+    Voraussicht auf die Aufgaben, die demnächst erledigt werden werden
+
+    Ziel: hervorragende Fragen unserer Kollegen nach dem Erledigungszeitpunkt von Aufgaben beantworten
+
+    Todo: 
+    - [X] Kapazität pro Woche - 30 Stunden 
+    - [X] Aufgaben haben eine Reihenfolge
+    - [X] Aufgaben sind begonnen oder nicht
+    - [X] Wenn Time spent > Time estimate, dann so tun, als ob noch 1 Stunde Arbeit offen ist.
+    - [X] Woche ist begonnen oder nicht 30 / 5 * 4 für Dienstagmorgen 
+    - [X] Zuerst "in Bearbeitung", dann "Wartet auf", dann "Queue" und dann "Zurueckgestellt"  where-object
+
+#>
+
+function RestkapazitaetDerAktuellenWoche($aktuellerTag, $kapazitaetProWocheInStunden) {
+
+    $kapazitaetProTag = $kapazitaetProWocheInStunden/5
+
+    if ($aktuellerTag -eq "Monday") {
+        return $kapazitaetProTag *5
+    }
+    if ($aktuellerTag -eq "Tuesday") {
+        return $kapazitaetProTag *4
+    }
+    if ($aktuellerTag -eq "Wednesday") {
+        return $kapazitaetProTag *3
+    }
+    if ($aktuellerTag -eq "Thursday") {
+        return $kapazitaetProTag *2 
+    }
+    if ($aktuellerTag -eq "Friday") {
+        return $kapazitaetProTag
+    }
+
+    return 0
+}
+
+
+function AufgabeAusgeben($DieGehoertZurWoche, $WirdDaAbgeschlossen, $aufgabe) {
+    $potenziellerNutzen = $aufgabe.PotenziellerNutzen
+    $ZeitschaetzungInStunden = $aufgabe.ZeitschaetzungInStunden
+    $NutzenProStundeAufwand = [Math]::Round( $aufgabe.NutzenProStundeAufwand, 2 )
+
+    #Write-Host $aufgabe
+    $text = "Woche $DieGehoertZurWoche : $($aufgabe.Number) $($aufgabe.Name) (Status: $($aufgabe.Column), Dauer: $ZeitschaetzungInStunden h, Pot.Nutzen: $potenziellerNutzen Pkt., Nutzen/Stunde: $NutzenProStundeAufwand )"
+
+    if ( $WirdDaAbgeschlossen ) {
+        write-host "$text (Abschluss)"
+    } else {
+        write-host "$text (Bearbeitung eines Teils der Aufgabe)"
+    }
+}
+
+function AufgabenVorbereitetUndSortiert($aufgaben) {
+
+    $vorbereiteteAufgaben = $aufgaben | ForEach-Object {
+        $aufgabe = $_
+
+        $TimeEstimate = $aufgabe.'Time estimate'
+        $TimeSpent = $aufgabe.'Time spent'
+
+        $zeitschaetzungInStunden = $TimeEstimate - $TimeSpent
+        if($TimeSpent -ge $TimeEstimate){
+            $zeitschaetzungInStunden = 1
+        }
+
+        $potenziellerNutzen = [int]::Parse( $aufgabe.Labels )
+        $NutzenProStundeAufwand = $potenziellerNutzen / $zeitschaetzungInStunden
+
+        New-Object -TypeName PSObject -Property @{
+            Number = $aufgabe.Number
+            Name = $aufgabe.Name
+            PotenziellerNutzen = $potenziellerNutzen
+            ZeitschaetzungInStunden = $zeitschaetzungInStunden
+            NutzenProStundeAufwand = $NutzenProStundeAufwand
+            Column = $aufgabe.Column
+        }
+    } 
+
+    $sortierteAufgaben = $vorbereiteteAufgaben | Sort-Object -Property NutzenProStundeAufwand -Descending 
+
+    $sortierteAufgaben
+}
+
+function GebeBearbeitungsreihenfolgeAus($aufgaben, $maximaleWochenAnzahl) {
+    $aktuelleWoche = 1
+    $restkapazitaetInDerAktuellenWocheInStunden = RestkapazitaetDerAktuellenWoche -aktuellerTag (Get-Date).DayOfWeek -kapazitaetProWocheInStunden $kapazitaetProWocheInStunden
+
+    for ( $i = 0; $i -lt $aufgaben.Length; $i++ )
+    {
+        $aufgabe = $aufgaben[$i]
+
+        if ( $aufgabe.ZeitschaetzungInStunden -le $restkapazitaetInDerAktuellenWocheInStunden ){
+
+            AufgabeAusgeben -DieGehoertZurWoche $aktuelleWoche -WirdDaAbgeschlossen $True -Aufgabe $aufgabe
+            $restkapazitaetInDerAktuellenWocheInStunden -= $aufgabe.ZeitschaetzungInStunden
+            #Write-Host "   - Restkapazität der Woche in Stunden: $restkapazitaetInDerAktuellenWocheInStunden"
+
+        } else {
+        
+            $restdauerInStunden = $aufgabe.ZeitschaetzungInStunden
+
+            while ($restdauerInStunden -ge $restkapazitaetInDerAktuellenWocheInStunden) {
+                $restdauerInStunden -= $restkapazitaetInDerAktuellenWocheInStunden
+                $restkapazitaetInDerAktuellenWocheInStunden = 0
+                AufgabeAusgeben -DieGehoertZurWoche $aktuelleWoche -WirdDaAbgeschlossen $False -Aufgabe $aufgabe
+
+                $aktuelleWoche += 1
+                $restkapazitaetInDerAktuellenWocheInStunden = $kapazitaetProWocheInStunden
+                #Write-Host "   - Neue Woche, neues Glück : +" $restkapazitaetInDerAktuellenWocheInStunden
+
+                if ($aktuelleWoche -gt $maximaleWochenAnzahl){
+                    return
+                }
+            }
+
+            $restkapazitaetInDerAktuellenWocheInStunden -= $restdauerInStunden
+            AufgabeAusgeben -DieGehoertZurWoche $aktuelleWoche -WirdDaAbgeschlossen $True -Aufgabe $aufgabe
+            #Write-Host "   - Restkapazität der Woche in Stunden: $restkapazitaetInDerAktuellenWocheInStunden"
+        }
+
+        #Read-Host
+    }
+}
+
+clear
+$kapazitaetProWocheInStunden = 30
+# einfach nur Export :)
+$aufgaben = Import-Excel -Path C:\Projekte\SE-Aufgaben\SE-Aufgaben.xlsx 
+
+$inBearbeitung  = AufgabenVorbereitetUndSortiert ($aufgaben | Where-Object Column -eq "in Bearbeitung")
+$wartetAuf      = AufgabenVorbereitetUndSortiert ($aufgaben | Where-Object Column -eq "Wartet auf")
+$Queue          = AufgabenVorbereitetUndSortiert ($aufgaben | Where-Object Column -eq "Queue")
+$Zurückgestellt = AufgabenVorbereitetUndSortiert ($aufgaben | Where-Object Column -eq "Zurückgestellt")
+
+$vorbereiteteAufgaben = @($inBearbeitung) + @($wartetAuf) + @($Queue) + @($Zurückgestellt) | Where-Object ZeitschaetzungInStunden -le 100
+#$vorbereiteteAufgaben | Out-GridView
+
+GebeBearbeitungsreihenfolgeAus -Aufgaben $vorbereiteteAufgaben -maximaleWochenAnzahl 10
